@@ -124,30 +124,7 @@ func (file *AstFile)Translate(writer writer.LuaWriter) {
 	for _, decl := range file.Decls {
 		cast(decl).(Translator).Translate(writer)
 	}
-	writer.AppendLine(-1, 0,"if init then init() end")
 	writer.AppendLine(-1, 0, "end")
-	//TODO:全局函数前置声明
-	/*TODO:第二版方向：
-	1.同一个包名下的文件编译在同一个lua文件中。
-	2.前置全局变量声明，其余按文件内顺序排列
-	3.全局变量，如var，const，type，func 使用local定义，前置声明。
-	4.取包内容时, 通过metatable读取，table的__newindex 设置不可写
-	  __index 通过key，计算hash，通过预编译的if语句实现快速查找，如：
-	  keyHash := hash(key) //可以所有变量名排序后的索引
-	  注意：实现时，如果中间值为小数，去掉==项即可
-	  //假设有20个
-	  if keyHash > 10 {
-	        if keyHash > 15 {
-	         } else if keyHash == 15 {
-				return var15
-	         } else {
-
-	         }
-	   } else if keyHash == 10 {
-	    	return var10
-	   } else {
-	   }
-	*/
 }
 
 //Ast.Decl
@@ -160,8 +137,13 @@ type AstFuncDecl ast.FuncDecl
 func (decl *AstFuncDecl)Translate(w writer.LuaWriter) {
 	var paramCheckers []string
 	if decl.Recv == nil {
-		w.AppendDef(decl.Name.Name)
-		w.AppendLine(-1, decl.Name.NamePos, fmt.Sprintf("%s = function(", decl.Name.Name))
+		funcName := decl.Name.Name
+		//初始化函数特殊处理
+		if funcName == "init" {
+			funcName = w.GetInitFuncName()
+		}
+		w.AppendDef(funcName)
+		w.AppendLine(-1, decl.Name.NamePos, fmt.Sprintf("%s = function(", funcName))
 	}else {
 
 		w.AppendLine(-1, 0, "")
@@ -169,7 +151,7 @@ func (decl *AstFuncDecl)Translate(w writer.LuaWriter) {
 		cast(recv.List[0].Type).(Translator).Translate(w)
 
 		recvName := recv.List[0].Names[0].Name
-		w.AppendLine(0, decl.Name.NamePos, fmt.Sprintf(".%s = function(%s", decl.Name.Name, recvName))
+		w.AppendLine(0, decl.Name.NamePos, fmt.Sprintf(".__mtable.%s = function(%s", decl.Name.Name, recvName))
 		if len(decl.Type.Params.List) > 0 {
 			w.AppendLine(0, 0, ",")
 		}
@@ -252,9 +234,6 @@ func (decl *AstGenDecl)Translate(writer writer.LuaWriter) {
 			}
 			writer.AppendLine(0, 0, " = ")
 			for index, value := range values {
-				if writer.IsGlobalScope() {
-					cast(value).(Translator).Translate(writer)
-				}
 				cast(value).(Translator).Translate(writer)
 				if index < len(names) -1 {
 					writer.AppendLine(0, 0, ",")

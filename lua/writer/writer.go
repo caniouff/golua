@@ -16,6 +16,7 @@ type LuaLine struct {
 
 type LuaFile struct {
 	packageName string
+	fileNames []string
 	predefine []string
 	lines []LuaLine
 	lineCount int
@@ -24,13 +25,17 @@ type LuaFile struct {
 
 type LuaWriter interface {
 	AppendLine(line int, astPos token.Pos, content string)
-	Write(fSet *token.FileSet, fileName string)
+	AppendFile(name string)
+	Write(fileObj *os.File)
+	AddSourceInfo(fSet *token.FileSet)
 	AppendDef(name string)
 	SetPackageName(name string)
 	GetPackageName()string
+	GetInitFuncName()string
 	IsGlobalScope() bool
 	EnterLocalScope()
 	LeaveLocalScope()
+	Reset()
 }
 
 type LuaReader interface {
@@ -58,8 +63,8 @@ func(f *LuaFile)AppendLine(line int, astPos token.Pos, content string) {
 	}
 }
 
-func assertWrite(fileObj *os.File, content string, hasFailed bool, failedOut string)  {
-	if hasFailed {
+func assertWrite(fileObj *os.File, content string, bSucc bool, failedOut string)  {
+	if !bSucc {
 		fmt.Println(failedOut)
 		os.Exit(2)
 		return
@@ -74,10 +79,10 @@ func assertWrite(fileObj *os.File, content string, hasFailed bool, failedOut str
 
 func checkWrite(fileObj *os.File, content string) bool  {
 	_,err := io.WriteString(fileObj, content)
-	return err != nil
+	return err == nil
 }
 
-func GenBrunchTree(names []string) [] string{
+func genBrunchTree(names []string) [] string{
 	count := len(names)
 	stack := make([]int, 0)
 	stack = append(stack, 1)
@@ -124,45 +129,33 @@ func GenBrunchTree(names []string) [] string{
 	return tree
 }
 
-func(f *LuaFile)Write(fSet *token.FileSet, fileName string){
-	os.Remove(fileName)
-	fileObj,err := os.OpenFile(fileName,os.O_RDWR|os.O_CREATE,0644)
-	if err != nil {
-		fmt.Println("Failed to open the file",err.Error())
-		os.Exit(2)
-	}
-	defer fileObj.Close()
-
+func(f *LuaFile)Write(fileObj *os.File){
 	bSucc := true
+	fileName := fileObj.Name()
 	//写预定义内容
 	sort.Strings(f.predefine)
 	for _, name := range f.predefine{
-		if bSucc = checkWrite(fileObj, fmt.Sprintf("local %s = nil \n", name)); bSucc {
+		if bSucc = checkWrite(fileObj, fmt.Sprintf("local %s = nil \n", name)); !bSucc {
 			break
 		}
 	}
 
-	assertWrite(fileObj, "--------------------------", bSucc,
+	assertWrite(fileObj, "--------------------------\n", bSucc,
 		fmt.Sprintf("failed to write predefine:%s", fileName))
 	//写翻译的代码内容
 	for _, line := range f.lines {
-
-		if bSucc = checkWrite(fileObj, line.buffer.String()); bSucc {
-			break
-		}
-		if line.astPos > 0 {
-			pos := fSet.Position(line.astPos)
-			if bSucc = checkWrite(fileObj, fmt.Sprintf("--[[%s:%d]]", pos.Filename, pos.Line));bSucc{
-				break
-			}
-		}
-
-		if bSucc = checkWrite(fileObj, "\n"); bSucc {
+		if bSucc = checkWrite(fileObj, line.buffer.String() + "\n"); !bSucc {
 			break
 		}
 	}
 
-	assertWrite(fileObj, "--------------------------", bSucc,
+	//调用初始化函数
+	for _, name := range f.fileNames {
+		if bSucc = checkWrite(fileObj, fmt.Sprintf("if %s_init then %s_init() end\n", name, name)); !bSucc {
+			break
+		}
+	}
+	assertWrite(fileObj, "--------------------------\n", bSucc,
 		fmt.Sprintf("Failed to write the code lines:%s",fileName))
 
 	//写入包内容
@@ -194,21 +187,52 @@ func(f *LuaFile)Write(fSet *token.FileSet, fileName string){
 	})
 	*/
 	//1.创建查找表
+	//1.1 预定义表
 	assertWrite(fileObj, "local predefine = {\n", bSucc,
 		fmt.Sprintf("Failed to write the predefine:%s",fileName))
 	for index, name := range f.predefine {
-		if bSucc = checkWrite(fileObj, fmt.Sprintf("%s = %d\n", name, index)); bSucc {
+		if bSucc = checkWrite(fileObj, fmt.Sprintf("%s = %d,\n", name, index)); !bSucc {
 			break
 		}
 	}
 	assertWrite(fileObj, "}\n", bSucc,
 		fmt.Sprintf("Failed to write the predefine:%s",fileName))
+
+	//1.2定义表头
+	assertWrite(fileObj, `return setmetatable({}, {
+__newindex = function() error("package is readonly") end,
+__index = function(t, key)
+`, bSucc,
+    fmt.Sprintf("Failed to write the metatable header:%s", fileName))
+
 	//2.开始package 的meta table
 	assertWrite(fileObj, "local index = predefine[key]\n", bSucc,
 		fmt.Sprintf("Failed to write the index assignment:%s",fileName))
 	//3.实现二分查找算法
+	brunches := genBrunchTree(f.predefine)
 
+	for _, brunch := range brunches {
+		if bSucc = checkWrite(fileObj, fmt.Sprintf("%s\n",brunch)); !bSucc {
+			break
+		}
+	}
 	//4.结束package
+	assertWrite(fileObj, "end})", bSucc,
+		fmt.Sprintf("Failed to write the ending:%s", fileName))
+}
+
+func (f *LuaFile) AddSourceInfo(fSet *token.FileSet)  {
+	//写翻译的代码内容
+	for _, line := range f.lines {
+		if line.astPos > 0 {
+			pos := fSet.Position(line.astPos)
+			line.buffer.WriteString(fmt.Sprintf("--[[%s:%d]]", pos.Filename, pos.Line))
+		}
+	}
+}
+
+func (f *LuaFile) AppendFile(name string)  {
+	f.fileNames = append(f.fileNames, name)
 }
 
 func (f *LuaFile) LineCount() int  {
@@ -242,6 +266,19 @@ func (f *LuaFile) GetPackageName()string  {
 	return f.packageName
 }
 
+func (f *LuaFile) GetInitFuncName() string  {
+	return f.fileNames[len(f.fileNames) - 1] + "_init"
+}
+
 func (f *LuaFile) AppendDef(name string)  {
 	f.predefine = append(f.predefine, name)
+}
+
+func (f *LuaFile) Reset()  {
+	f.predefine = []string{}
+	f.fileNames = []string{}
+	f.packageName = ""
+	f.localScopeStack = 0
+	f.lineCount = 0
+	f.lines = []LuaLine{}
 }

@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-func GetAllFile(src, suffix string, files []string)([]string) {
+func GetAllFile(src, suffix string, files []string)[]string {
 	rd, err := ioutil.ReadDir(src)
 	if err != nil {
 		fmt.Println("read dir fail:", err)
@@ -35,6 +35,79 @@ func GetAllFile(src, suffix string, files []string)([]string) {
 	}
 	return files
 }
+
+func TravalFolder(src string, out string) {
+	rd, err := ioutil.ReadDir(src)
+	if err != nil {
+		fmt.Println("read dir fail:", err)
+		return
+	}
+
+	luaFile := new(writer.LuaFile)
+	err = CompilePackage(luaFile, src, out)
+	if err != nil {
+		fmt.Println("compile fail:", src)
+		return
+	}
+	for _, fi := range rd {
+		if fi.IsDir() {
+			fullDir := src + "/" + fi.Name()
+
+			luaFile.AppendFile(fi.Name())
+			err = CompilePackage(luaFile, fullDir, out)
+			if err != nil {
+				fmt.Println("compile fail:", src)
+				return
+			}
+			outDir := out + "/" + fi.Name()
+			TravalFolder(fullDir, outDir)
+		}
+	}
+}
+
+func CompilePackage(writer writer.LuaWriter,folder string, out string) error {
+	writer.Reset()
+
+	rd, err := ioutil.ReadDir(folder)
+	if err != nil {
+		fmt.Println("read dir failed:", err)
+		return err
+	}
+	hasGoFile := false
+	for _, fi := range rd {
+		if !fi.IsDir() && strings.HasSuffix(fi.Name(), ".go") {
+			hasGoFile = true
+
+			path := folder + "/" + fi.Name()
+			fSet := token.NewFileSet() // positions are relative to fset
+			f, err := parser.ParseFile(fSet, path, nil, parser.ParseComments)
+			if err != nil {
+				return err
+			}
+			//ast.Print(fSet, f)
+			writer.AppendFile(strings.TrimSuffix(fi.Name(), ".go"))
+			(*translate.AstFile)(f).Translate(writer)
+			writer.AddSourceInfo(fSet)
+		}
+	}
+
+	outPath := out + "/" + writer.GetPackageName() + ".lua"
+	os.Remove(outPath)
+	fileObj,err := os.OpenFile(outPath,os.O_RDWR|os.O_CREATE,0644)
+	if err != nil {
+		fmt.Println("Failed to open the file",err.Error())
+		os.Exit(2)
+	}
+	defer fileObj.Close()
+
+
+	writer.Write(fileObj)
+	if !hasGoFile {
+		os.Remove(outPath)
+	}
+
+	return nil
+}
 func compileOne(src, out string)  {
 	// Create the AST by parsing src.
 	fSet := token.NewFileSet() // positions are relative to fset
@@ -45,15 +118,11 @@ func compileOne(src, out string)  {
 	luaFile := writer.LuaFile{}
 	//ast.Print(fSet, f)
 	(*translate.AstFile)(f).Translate(&luaFile)
-	luaFile.Write(fSet,out)
+	//luaFile.Write(fSet,out)
 }
 
 func compile(src, out string) {
-	var files []string
-	for _, file := range GetAllFile(src, ".go", files) {
-		outName := strings.Replace(file, src, out, 1)
-		compileOne(file, strings.Replace(outName, ".go", ".lua", 1))
-	}
+	TravalFolder(src, out)
 }
 
 func main() {
@@ -62,9 +131,4 @@ func main() {
 		return
 	}
 	compile(os.Args[1], os.Args[2])
-	names := []string{"A", "B", "C", "D", "E"}
-	tree := writer.GenBrunchTree(names[0:])
-	for _, leaf := range tree {
-		fmt.Println(leaf)
-	}
 }
