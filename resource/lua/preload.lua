@@ -59,6 +59,8 @@ end
 function _G.range(value)
     if type(value) == "string" then
         return rangestr(value)
+    else
+        return pairs(value)
     end
     return nil
 end
