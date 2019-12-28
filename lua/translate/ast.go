@@ -244,6 +244,13 @@ func (decl *AstGenDecl)Translate(writer writer.LuaWriter) {
 			writer.AppendDef(typeSpec.Name.Name)
 			writer.AppendLine(-1, 0, fmt.Sprintf("%s = ", typeSpec.Name.Name))
 			cast(typeSpec.Type).(Translator).Translate(writer)
+
+			switch typeSpec.Type.(type) {
+			case *ast.StructType:
+				writer.AppendLine(-1, 0, fmt.Sprintf("%s.__name = \"%s\"", typeSpec.Name.Name, typeSpec.Name.Name))
+			case *ast.InterfaceType:
+				writer.AppendLine(-1, 0, fmt.Sprintf("%s.__name = \"%s\"", typeSpec.Name.Name, typeSpec.Name.Name))
+			}
 		}
 	}
 }

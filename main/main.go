@@ -11,32 +11,7 @@ import (
 	"strings"
 )
 
-func GetAllFile(src, suffix string, files []string)[]string {
-	rd, err := ioutil.ReadDir(src)
-	if err != nil {
-		fmt.Println("read dir fail:", err)
-		return files
-	}
-	for _, fi := range rd {
-		if fi.IsDir() {
-			fullDir := src + "/" + fi.Name()
-			files = GetAllFile(fullDir, suffix, files)
-			if err != nil {
-				fmt.Println("read dir fail:", err)
-				return files
-			}
-		} else {
-			if strings.HasSuffix(fi.Name(), suffix) {
-				fullName := src + "/" + fi.Name()
-				files = append(files, fullName)
-			}
-
-		}
-	}
-	return files
-}
-
-func TravalFolder(src string, out string) {
+func TravelFolder(src string, out string) {
 	rd, err := ioutil.ReadDir(src)
 	if err != nil {
 		fmt.Println("read dir fail:", err)
@@ -60,7 +35,7 @@ func TravalFolder(src string, out string) {
 				return
 			}
 			outDir := out + "/" + fi.Name()
-			TravalFolder(fullDir, outDir)
+			TravelFolder(fullDir, outDir)
 		}
 	}
 }
@@ -108,21 +83,8 @@ func CompilePackage(writer writer.LuaWriter,folder string, out string) error {
 
 	return nil
 }
-func compileOne(src, out string)  {
-	// Create the AST by parsing src.
-	fSet := token.NewFileSet() // positions are relative to fset
-	f, err := parser.ParseFile(fSet, src, nil, parser.ParseComments)
-	if err != nil {
-		panic(err)
-	}
-	luaFile := writer.LuaFile{}
-	//ast.Print(fSet, f)
-	(*translate.AstFile)(f).Translate(&luaFile)
-	//luaFile.Write(fSet,out)
-}
-
 func compile(src, out string) {
-	TravalFolder(src, out)
+	TravelFolder(src, out)
 }
 
 func main() {

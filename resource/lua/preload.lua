@@ -74,9 +74,11 @@ function _G.struct(define)
     define.__mtable = {}
     define.__type = "struct"
     return setmetatable(define, {
+        __tostring = function() return  define.__type .. ":".. define.__name end,
         --定义构造函数
         __call = function(def, params)
             local ret = {}
+            local objName = tostring(ret) .. "#" ..define.__name
             local embed = {}
             --设置成员初始值
             for key, value in pairs(def) do
@@ -96,20 +98,42 @@ function _G.struct(define)
                 end
             end
 
-            --设置内嵌类型的方法
-            for embedName, embedStruct in pairs(embed) do
-                for name, func in pairs(embedStruct.__mtable) do
-                    ret[name] = function(self, ...)
-                        return func(ret[embedName], ...)
-                    end
-                end
-            end
-
             --设置成员方法(会隐藏内嵌结构方法)
             for name, func in pairs(def.__mtable) do
                 ret[name] = func
             end
-            --
+            --内嵌结构
+            setmetatable(ret, {
+                __tostring = function() return objName end,
+                __newindex = function(t, k, v)
+                    local foundEs
+                    for name, es in pairs(embed) do
+                        print("embed", name, k)
+                        local esObj = rawget(t, name)
+                        local value = esObj[k]
+                        if value or (es[k] and es[k].__name == "interface") then
+                            if foundEs then
+                                error(string.format("repeat member name[%s] in embed struct", k))
+                            end
+                            esObj[k] = v
+                            foundEs = true
+                        end
+                    end
+                end,
+                __index = function(t, k)
+                    local foundValue
+                    for name,_ in pairs(embed) do
+                        local value = rawget(t, name)[k]
+                        if value then
+                            if foundValue then
+                                error(string.format("repeat member name[%s] in embed struct", k))
+                            end
+                            foundValue = value
+                        end
+                    end
+                    return foundValue
+                end
+            })
             return ret
         end
     })
@@ -117,7 +141,9 @@ end
 
 function _G.interface(define)
     define.__type = "interface"
-    return define
+    return setmetatable(define, {
+        __tostring = function() return  define.__type .. ":".. define.__name end
+    })
 end
 
 function _G.method(...)
@@ -165,7 +191,8 @@ local function buildIn(name, value)
     _G[name] = setmetatable({__name = name}, {
         __call = function()
             return value
-        end
+        end,
+        __tostring = function() return "buildin:" .. name end
     })
 end
 buildIn("number", 0)

@@ -191,7 +191,7 @@ func(f *LuaFile)Write(fileObj *os.File){
 	assertWrite(fileObj, "local predefine = {\n", bSucc,
 		fmt.Sprintf("Failed to write the predefine:%s",fileName))
 	for index, name := range f.predefine {
-		if bSucc = checkWrite(fileObj, fmt.Sprintf("%s = %d,\n", name, index)); !bSucc {
+		if bSucc = checkWrite(fileObj, fmt.Sprintf("%s = %d,\n", name, index + 1)); !bSucc {
 			break
 		}
 	}
