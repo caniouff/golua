@@ -12,6 +12,7 @@ import (
 type LuaLine struct {
 	buffer bytes.Buffer
 	astPos token.Pos
+	setSource bool
 }
 
 type LuaFile struct {
@@ -221,12 +222,14 @@ __index = function(t, key)
 		fmt.Sprintf("Failed to write the ending:%s", fileName))
 }
 
-func (f *LuaFile) AddSourceInfo(fSet *token.FileSet)  {
+func (f *LuaFile) AddSourceInfo(fSet *token.FileSet) {
 	//写翻译的代码内容
-	for _, line := range f.lines {
-		if line.astPos > 0 {
+	for index := range f.lines {
+		line := &f.lines[index]
+		if !line.setSource && line.astPos > 0 {
 			pos := fSet.Position(line.astPos)
 			line.buffer.WriteString(fmt.Sprintf("--[[%s:%d]]", pos.Filename, pos.Line))
+			line.setSource = true
 		}
 	}
 }

@@ -12,10 +12,6 @@ local _PACKAGE = {} --包内容
 
 local strings = string
 
-function _G.package(name)
-    return {__name = name, __type == "package"}
-end
-
 function _G.import(path)
     return require(path)
 end
@@ -188,7 +184,11 @@ end
 ----------------------------------
 --内建类型
 local function buildIn(name, value)
-    _G[name] = setmetatable({__name = name}, {
+    local nameType = _G[name]
+    if not nameType then
+        nameType = {__name = name}
+    end
+    _G[name] = setmetatable(nameType, {
         __call = function()
             return value
         end,
@@ -198,6 +198,7 @@ end
 buildIn("number", 0)
 buildIn("string", "")
 buildIn("bool", false)
+
 ----------------------------------
 --类型映射
 --typedefine(_G, "float64", number)

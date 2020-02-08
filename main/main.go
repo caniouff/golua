@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-func TravelFolder(src string, out string) {
+func TravelFolder(src string, out string, isRoot bool) {
 	rd, err := ioutil.ReadDir(src)
 	if err != nil {
 		fmt.Println("read dir fail:", err)
@@ -28,21 +28,26 @@ func TravelFolder(src string, out string) {
 		if fi.IsDir() {
 			fullDir := src + "/" + fi.Name()
 
-			luaFile.AppendFile(fi.Name())
-			err = CompilePackage(luaFile, fullDir, out)
-			if err != nil {
-				fmt.Println("compile fail:", src)
-				return
-			}
+			//luaFile.AppendFile(fi.Name())
+			//err = CompilePackage(luaFile, fullDir, out)
+			//if err != nil {
+			//	fmt.Println("compile fail:", src)
+			//	return
+			//}
 			outDir := out + "/" + fi.Name()
-			TravelFolder(fullDir, outDir)
+			if isRoot {
+				outDir = out
+			}
+
+			TravelFolder(fullDir, outDir, false)
 		}
 	}
 }
 
 func CompilePackage(writer writer.LuaWriter,folder string, out string) error {
-	writer.Reset()
+	os.MkdirAll(out, os.ModePerm)
 
+	writer.Reset()
 	rd, err := ioutil.ReadDir(folder)
 	if err != nil {
 		fmt.Println("read dir failed:", err)
@@ -75,7 +80,6 @@ func CompilePackage(writer writer.LuaWriter,folder string, out string) error {
 	}
 	defer fileObj.Close()
 
-
 	writer.Write(fileObj)
 	if !hasGoFile {
 		os.Remove(outPath)
@@ -84,7 +88,7 @@ func CompilePackage(writer writer.LuaWriter,folder string, out string) error {
 	return nil
 }
 func compile(src, out string) {
-	TravelFolder(src, out)
+	TravelFolder(src, out, true)
 }
 
 func main() {

@@ -144,6 +144,9 @@ func (decl *AstFuncDecl)Translate(w writer.LuaWriter) {
 		}
 		w.AppendDef(funcName)
 		w.AppendLine(-1, decl.Name.NamePos, fmt.Sprintf("%s = function(", funcName))
+		if len(decl.Type.Params.List) > 0 {
+			w.AppendLine(0, 0, "_,")
+		}
 	}else {
 
 		w.AppendLine(-1, 0, "")
@@ -162,15 +165,31 @@ func (decl *AstFuncDecl)Translate(w writer.LuaWriter) {
 
 	for index, param := range decl.Type.Params.List {
 		for iName, name := range param.Names {
-			w.AppendLine(0, name.NamePos, name.Name)
+			//变长参数需要特殊处理
+			isEllipsis := false
+			switch param.Type.(type) {
+			case *ast.Ellipsis: isEllipsis = true
+			}
+			//变长参数，参数名使用...
+			if isEllipsis {
+				w.AppendLine(0, name.NamePos, "...")
+			} else {
+				w.AppendLine(0, name.NamePos, name.Name)
+			}
 			if iName < len(param.Names) - 1 {
 				w.AppendLine(0, 0, ",")
 			}
 
-			tempWriter := writer.LuaFile{}
-			cast(param.Type).(Translator).Translate(&tempWriter)
+			//变长参数，值转换成表
+			if isEllipsis {
+				paramCheckers = append(paramCheckers, fmt.Sprintf("%s = checkType(%s, %s)", name.Name, "{...}", "nil"))
+			} else {
+				tempWriter := writer.LuaFile{}
+				cast(param.Type).(Translator).Translate(&tempWriter)
 
-			paramCheckers = append(paramCheckers, fmt.Sprintf("%s = checkType(%s, %s)", name.Name, name.Name, tempWriter.Line(0)))
+				paramCheckers = append(paramCheckers, fmt.Sprintf("%s = checkType(%s, %s)", name.Name, name.Name, tempWriter.Line(0)))
+			}
+
 		}
 		if index < len(decl.Type.Params.List) - 1 {
 			w.AppendLine(0, 0, ",")
@@ -180,6 +199,9 @@ func (decl *AstFuncDecl)Translate(w writer.LuaWriter) {
 	for _, checker := range paramCheckers {
 		w.AppendLine(-1, 0, checker)
 	}
+	if len(paramCheckers) > 0 {
+		w.AppendLine(-1, 0, "")
+	}
 	//检查是否有lua实现
 	useLua := false
 	if decl.Doc != nil {
@@ -188,10 +210,10 @@ func (decl *AstFuncDecl)Translate(w writer.LuaWriter) {
 				useLua = true
 				continue
 			}
-			if strings.HasPrefix(comment.Text, "/*\n") &&
-				strings.HasSuffix(comment.Text, "\n*/") {
-				//去掉换行和注释符
-				w.AppendLine(-1, comment.Pos(), comment.Text[3:len(comment.Text) - 3])
+			if useLua && strings.HasPrefix(comment.Text, "/*") &&
+				strings.HasSuffix(comment.Text, "*/") {
+				//去掉注释符
+				w.AppendLine(-1, comment.Pos(), strings.Trim(comment.Text[2 :len(comment.Text) - 2], " \t\n\v\f\r"))
 				break
 			}
 		}
@@ -436,7 +458,14 @@ func (ell *AstEllipsis)Translate(writer writer.LuaWriter) {
 
 type AstBasicLit ast.BasicLit
 func (basicLit *AstBasicLit)Translate(writer writer.LuaWriter) {
-	writer.AppendLine(0, basicLit.ValuePos, basicLit.Value)
+	value := basicLit.Value
+	if basicLit.Kind == token.STRING {
+		if value[0] == '`' && value[len(value) - 1] == '`' {
+			value = strings.Replace(value, "`", "[[", 1)
+			value = strings.Replace(value, "`", "]]", 1)
+		}
+	}
+	writer.AppendLine(0, basicLit.ValuePos, value)
 }
 
 type AstFuncLit ast.FuncLit
@@ -669,10 +698,10 @@ func (funcType *AstFuncType)Translate(writer writer.LuaWriter) {
 	writer.AppendLine(0, funcType.Func, "\"=>\"")
 	if funcType.Results != nil {
 		for index, res := range funcType.Results.List {
-			cast(res.Type).(Translator).Translate(writer)
 			if index < len(funcType.Results.List) {
 				writer.AppendLine(0, 0, ",")
 			}
+			cast(res.Type).(Translator).Translate(writer)
 		}
 	}
 }
