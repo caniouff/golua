@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 )
 
 type LuaLine struct {
@@ -16,17 +17,19 @@ type LuaLine struct {
 }
 
 type LuaFile struct {
-	packageName string
-	fileNames []string
-	predefine []string
-	lines []LuaLine
-	lineCount int
+	packageName     string
+	fileNames       []string
+	fileSets        []*token.FileSet
+	predefine       []string
+	lines           []LuaLine
+	lineCount       int
+	lastDefinedLine int
 	localScopeStack int
 }
 
 type LuaWriter interface {
 	AppendLine(line int, astPos token.Pos, content string)
-	AppendFile(name string)
+	AppendFile(name string, fSet *token.FileSet)
 	Write(fileObj *os.File)
 	AddSourceInfo(fSet *token.FileSet)
 	AppendDef(name string)
@@ -37,6 +40,8 @@ type LuaWriter interface {
 	EnterLocalScope()
 	LeaveLocalScope()
 	Reset()
+	MakeEmptyWriter() LuaWriter
+	String() string
 }
 
 type LuaReader interface {
@@ -44,6 +49,12 @@ type LuaReader interface {
 	Line(line int) string
 }
 func(f *LuaFile)AppendLine(line int, astPos token.Pos, content string) {
+	definedLine := f.DefinedLine(astPos)
+	if f.lastDefinedLine > 0 && definedLine > f.lastDefinedLine {
+		line = f.lineCount + definedLine - f.lastDefinedLine
+	}
+	f.lastDefinedLine = definedLine
+
 	if line < 0 {
 		f.lines = append(f.lines, LuaLine{})
 		f.lineCount++
@@ -234,8 +245,22 @@ func (f *LuaFile) AddSourceInfo(fSet *token.FileSet) {
 	}
 }
 
-func (f *LuaFile) AppendFile(name string)  {
+func (f *LuaFile) AppendFile(name string, fSet *token.FileSet) {
 	f.fileNames = append(f.fileNames, name)
+	f.fileSets = append(f.fileSets, fSet)
+}
+
+func (f *LuaFile) DefinedLine(astPos token.Pos) int{
+	if len(f.fileSets) < 0 {
+		return 0
+	}
+	fSet := f.fileSets[len(f.fileSets) - 1]
+	if astPos > 0 {
+		pos := fSet.Position(astPos)
+		return pos.Line
+	} else {
+		return 0
+	}
 }
 
 func (f *LuaFile) LineCount() int  {
@@ -283,5 +308,24 @@ func (f *LuaFile) Reset()  {
 	f.packageName = ""
 	f.localScopeStack = 0
 	f.lineCount = 0
+	f.lastDefinedLine = 0
+	f.fileSets = []*token.FileSet{}
 	f.lines = []LuaLine{}
+}
+
+func (f *LuaFile) MakeEmptyWriter() LuaWriter {
+	emptyFile := &LuaFile{}
+	emptyFile.fileSets = f.fileSets
+	emptyFile.fileNames = f.fileNames
+	emptyFile.packageName = f.packageName
+
+	return emptyFile
+}
+
+func (f *LuaFile)String() string  {
+	sb := strings.Builder{}
+	for _, line := range f.lines {
+		sb.WriteString(line.buffer.String() + "\n")
+	}
+	return sb.String()
 }

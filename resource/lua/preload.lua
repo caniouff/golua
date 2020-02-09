@@ -11,7 +11,10 @@ local _PACKAGE = {} --包内容
  ]]
 
 local strings = string
-
+local meta = getmetatable("")
+meta.__add = function(a, b)
+    return a .. b
+end
 function _G.import(path)
     return require(path)
 end

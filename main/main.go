@@ -65,7 +65,7 @@ func CompilePackage(writer writer.LuaWriter,folder string, out string) error {
 				return err
 			}
 			//ast.Print(fSet, f)
-			writer.AppendFile(strings.TrimSuffix(fi.Name(), ".go"))
+			writer.AppendFile(strings.TrimSuffix(fi.Name(), ".go"), fSet)
 			(*translate.AstFile)(f).Translate(writer)
 			writer.AddSourceInfo(fSet)
 		}

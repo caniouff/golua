@@ -70,6 +70,8 @@ func cast(astNode interface{}) interface{} {
 		return (*AstFuncLit)(astNode.(*ast.FuncLit))
 	case *ast.CompositeLit:
 		return (*AstCompositeLit)(astNode.(*ast.CompositeLit))
+	case *ast.ParenExpr:
+		return (*AstParenExpr)(astNode.(*ast.ParenExpr))
 	case *ast.SelectorExpr:
 		return (*AstSelectorExpr)(astNode.(*ast.SelectorExpr))
 	case *ast.IndexExpr:
@@ -158,9 +160,9 @@ func (decl *AstFuncDecl)Translate(w writer.LuaWriter) {
 		if len(decl.Type.Params.List) > 0 {
 			w.AppendLine(0, 0, ",")
 		}
-		tempWriter := writer.LuaFile{}
-		cast(recv.List[0].Type).(Translator).Translate(&tempWriter)
-		paramCheckers = append(paramCheckers, fmt.Sprintf("%s = checkType(%s, %s)", recvName, recvName, tempWriter.Line(0)))
+		tempWriter := w.MakeEmptyWriter()
+		cast(recv.List[0].Type).(Translator).Translate(tempWriter)
+		paramCheckers = append(paramCheckers, fmt.Sprintf("%s = checkType(%s, %s)", recvName, recvName, tempWriter.String()))
 	}
 
 	for index, param := range decl.Type.Params.List {
@@ -184,10 +186,10 @@ func (decl *AstFuncDecl)Translate(w writer.LuaWriter) {
 			if isEllipsis {
 				paramCheckers = append(paramCheckers, fmt.Sprintf("%s = checkType(%s, %s)", name.Name, "{...}", "nil"))
 			} else {
-				tempWriter := writer.LuaFile{}
-				cast(param.Type).(Translator).Translate(&tempWriter)
+				tempWriter := w.MakeEmptyWriter()
+				cast(param.Type).(Translator).Translate(tempWriter)
 
-				paramCheckers = append(paramCheckers, fmt.Sprintf("%s = checkType(%s, %s)", name.Name, name.Name, tempWriter.Line(0)))
+				paramCheckers = append(paramCheckers, fmt.Sprintf("%s = checkType(%s, %s)", name.Name, name.Name, tempWriter.String()))
 			}
 
 		}
@@ -557,6 +559,9 @@ func (expr *AstStarExpr)Translate(writer writer.LuaWriter) {
 
 type AstUnaryExpr ast.UnaryExpr
 func (expr *AstUnaryExpr)Translate(writer writer.LuaWriter) {
+	if expr.Op == token.NOT {
+		writer.AppendLine(0, expr.OpPos, "not ")
+	}
 	cast(expr.X).(Translator).Translate(writer)
 }
 
