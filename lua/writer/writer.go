@@ -25,6 +25,8 @@ type LuaFile struct {
 	lineCount       int
 	lastDefinedLine int
 	localScopeStack int
+	needSetIota     bool
+	iotaExpr        string
 }
 
 type LuaWriter interface {
@@ -41,6 +43,12 @@ type LuaWriter interface {
 	LeaveLocalScope()
 	Reset()
 	MakeEmptyWriter() LuaWriter
+
+	SetIota(set bool)
+	HasSetIota() bool
+	SetIotaExpr(expr string)
+	GetIotaExpr() string
+	ClearIota()
 	String() string
 }
 
@@ -50,11 +58,14 @@ type LuaReader interface {
 }
 func(f *LuaFile)AppendLine(line int, astPos token.Pos, content string) {
 	definedLine := f.DefinedLine(astPos)
-	if f.lastDefinedLine > 0 && definedLine > f.lastDefinedLine {
-		line = f.lineCount + definedLine - f.lastDefinedLine
+	if line == 0 {
+		if f.lastDefinedLine > 0 && definedLine > f.lastDefinedLine {
+			line = f.lineCount + definedLine - f.lastDefinedLine
+		}
+		f.lastDefinedLine = definedLine
+	} else {
+		f.lastDefinedLine = 0
 	}
-	f.lastDefinedLine = definedLine
-
 	if line < 0 {
 		f.lines = append(f.lines, LuaLine{})
 		f.lineCount++
@@ -94,53 +105,6 @@ func checkWrite(fileObj *os.File, content string) bool  {
 	return err == nil
 }
 
-func genBrunchTree(names []string) [] string{
-	count := len(names)
-	stack := make([]int, 0)
-	stack = append(stack, 1)
-	stack = append(stack, count)
-
-	tree := make([]string, 0)
-	for {
-		stackLen := len(stack)
-		if stackLen < 2 {
-			break
-		}
-
-		left := stack[stackLen-1]
-		right := stack[stackLen-2]
-
-		stack = stack[0:stackLen-2]
-
-		mid := (left + right) / 2
-
-		if mid == -1 {
-			tree = append(tree, "else")
-		}else if mid == -2 {
-			tree = append(tree, "end")
-		}else if left == right {
-			tree = append(tree, fmt.Sprintf("return %s ", names[mid - 1]))
-		} else {
-			tree = append(tree, fmt.Sprintf("if index > %d then", mid))
-
-			stack = append(stack, -2)
-			stack = append(stack, -2)
-
-			stack = append(stack, right)
-			stack = append(stack, mid)
-
-			stack = append(stack, -1)
-			stack = append(stack, -1)
-
-			if mid + 1 <= left {
-				stack = append(stack, mid + 1)
-				stack = append(stack, left)
-			}
-		}
-	}
-	return tree
-}
-
 func(f *LuaFile)Write(fileObj *os.File){
 	bSucc := true
 	fileName := fileObj.Name()
@@ -171,39 +135,12 @@ func(f *LuaFile)Write(fileObj *os.File){
 		fmt.Sprintf("Failed to write the code lines:%s",fileName))
 
 	//写入包内容
-	/*
-	local predefine = { A= 1, B=2, ...}
-	local predefineCount = 10
-	return setmetatable({}, {
-	__newindex = function() error("package is readonly") end,
-	__index = function(t, key)
-		local index = predefine(key)
-		if not index then error(string.format("not found %s in package:packageName", ))return nil end
-		if index > 5 {
-	        if index > 7 {
-	             if index > 9 {
-
-	             }elseif index == 9 {
-	             }else{
-	             }
-	        } elseif index == 7 {
-
-	        } else {
-			}
-		} elseif index == 5 {
-			return F
-	    } else {
-
-		}
-	end
-	})
-	*/
 	//1.创建查找表
 	//1.1 预定义表
 	assertWrite(fileObj, "local predefine = {\n", bSucc,
 		fmt.Sprintf("Failed to write the predefine:%s",fileName))
-	for index, name := range f.predefine {
-		if bSucc = checkWrite(fileObj, fmt.Sprintf("%s = %d,\n", name, index + 1)); !bSucc {
+	for _, name := range f.predefine {
+		if bSucc = checkWrite(fileObj, fmt.Sprintf("%s = %s,\n", name, name)); !bSucc {
 			break
 		}
 	}
@@ -211,25 +148,13 @@ func(f *LuaFile)Write(fileObj *os.File){
 		fmt.Sprintf("Failed to write the predefine:%s",fileName))
 
 	//1.2定义表头
-	assertWrite(fileObj, `return setmetatable({}, {
+	assertWrite(fileObj, `return setmetatable(predefine, {
 __newindex = function() error("package is readonly") end,
-__index = function(t, key)
 `, bSucc,
     fmt.Sprintf("Failed to write the metatable header:%s", fileName))
 
-	//2.开始package 的meta table
-	assertWrite(fileObj, "local index = predefine[key]\n", bSucc,
-		fmt.Sprintf("Failed to write the index assignment:%s",fileName))
-	//3.实现二分查找算法
-	brunches := genBrunchTree(f.predefine)
-
-	for _, brunch := range brunches {
-		if bSucc = checkWrite(fileObj, fmt.Sprintf("%s\n",brunch)); !bSucc {
-			break
-		}
-	}
-	//4.结束package
-	assertWrite(fileObj, "end})", bSucc,
+	//结束package
+	assertWrite(fileObj, "})", bSucc,
 		fmt.Sprintf("Failed to write the ending:%s", fileName))
 }
 
@@ -313,6 +238,27 @@ func (f *LuaFile) Reset()  {
 	f.lines = []LuaLine{}
 }
 
+func (f *LuaFile) SetIota(set bool) {
+	f.needSetIota = set
+}
+
+func (f *LuaFile) HasSetIota() bool {
+	return f.needSetIota
+}
+
+func (f *LuaFile) SetIotaExpr(expr string)  {
+	f.iotaExpr = expr
+}
+
+func (f *LuaFile) GetIotaExpr() string  {
+	return f.iotaExpr
+}
+
+func (f *LuaFile) ClearIota() {
+	f.iotaExpr = ""
+	f.needSetIota = false
+}
+
 func (f *LuaFile) MakeEmptyWriter() LuaWriter {
 	emptyFile := &LuaFile{}
 	emptyFile.fileSets = f.fileSets
@@ -324,8 +270,11 @@ func (f *LuaFile) MakeEmptyWriter() LuaWriter {
 
 func (f *LuaFile)String() string  {
 	sb := strings.Builder{}
-	for _, line := range f.lines {
-		sb.WriteString(line.buffer.String() + "\n")
+	for index, line := range f.lines {
+		sb.WriteString(line.buffer.String())
+		if index > 0 && index < len(f.lines) - 1 {
+			sb.WriteString("\n")
+		}
 	}
 	return sb.String()
 }

@@ -201,9 +201,7 @@ func (decl *AstFuncDecl)Translate(w writer.LuaWriter) {
 	for _, checker := range paramCheckers {
 		w.AppendLine(-1, 0, checker)
 	}
-	if len(paramCheckers) > 0 {
-		w.AppendLine(-1, 0, "")
-	}
+	w.AppendLine(-1, 0, "")
 	//检查是否有lua实现
 	useLua := false
 	if decl.Doc != nil {
@@ -228,6 +226,9 @@ func (decl *AstFuncDecl)Translate(w writer.LuaWriter) {
 
 type AstGenDecl ast.GenDecl
 func (decl *AstGenDecl)Translate(writer writer.LuaWriter) {
+	//clear iota info
+	writer.ClearIota()
+
 	for _, spec := range decl.Specs {
 		switch  {
 		case decl.Tok == token.IMPORT:
@@ -243,10 +244,15 @@ func (decl *AstGenDecl)Translate(writer writer.LuaWriter) {
 			writer.AppendLine(-1, 0, fmt.Sprintf("local %s = import(", packageName))
 			cast(spec).(Translator).Translate(writer)
 			writer.AppendLine(0, 0, ")")
-		case decl.Tok == token.CONST || decl.Tok == token.VAR:
+		case decl.Tok == token.VAR:
 			names := spec.(*ast.ValueSpec).Names
 			values := spec.(*ast.ValueSpec).Values
-			writer.AppendLine(-1, 0, "")
+
+			if !writer.IsGlobalScope() {
+				writer.AppendLine(0, 0, "local ")
+			} else{
+				writer.AppendLine(-1, 0, "")
+			}
 			for index, name := range names {
 				if writer.IsGlobalScope() {
 					writer.AppendDef(name.Name)
@@ -257,12 +263,56 @@ func (decl *AstGenDecl)Translate(writer writer.LuaWriter) {
 				}
 			}
 			writer.AppendLine(0, 0, " = ")
+
 			for index, value := range values {
 				cast(value).(Translator).Translate(writer)
 				if index < len(names) -1 {
 					writer.AppendLine(0, 0, ",")
 				}
 			}
+		case decl.Tok == token.CONST:
+			names := spec.(*ast.ValueSpec).Names
+			values := spec.(*ast.ValueSpec).Values
+
+			if !writer.IsGlobalScope() {
+				writer.AppendLine(0, 0, "local ")
+			} else{
+				writer.AppendLine(-1, 0, "")
+			}
+			for index, name := range names {
+				if writer.IsGlobalScope() {
+					writer.AppendDef(name.Name)
+				}
+				writer.AppendLine(0, 0, name.Name)
+				if index < len(names) -1 {
+					writer.AppendLine(0, 0, ",")
+				}
+			}
+			writer.AppendLine(0, 0, " = ")
+
+			valueWrite := writer.MakeEmptyWriter()
+			for index, value := range values {
+				cast(value).(Translator).Translate(valueWrite)
+				if index < len(names) -1 {
+					valueWrite.AppendLine(0, 0, ",")
+				}
+			}
+			//handle itoa
+			if valueWrite.HasSetIota() {
+				writer.SetIotaExpr(valueWrite.String())
+			}
+
+			//has iota
+			if (len(values) == 0 || valueWrite.HasSetIota()) && writer.GetIotaExpr() != ""{
+				iotaValue := names[0].Obj.Data
+				iotaExpr := writer.GetIotaExpr()
+
+				writer.AppendLine(0, 0,
+					strings.Replace(iotaExpr, "iota",fmt.Sprintf("%d", iotaValue), -1))
+			} else {
+				writer.AppendLine(0, 0, valueWrite.String())
+			}
+
 		case decl.Tok == token.TYPE:
 			typeSpec := spec.(*ast.TypeSpec)
 			writer.AppendDef(typeSpec.Name.Name)
@@ -316,7 +366,7 @@ func (stmt *AstIncDecStmt)Translate(writer writer.LuaWriter) {
 type AstAssignStmt ast.AssignStmt
 func (stmt *AstAssignStmt)Translate(writer writer.LuaWriter) {
 	if stmt.Tok == token.DEFINE {
-		writer.AppendLine(-1, stmt.TokPos, "local ")
+		writer.AppendLine(0, stmt.TokPos, "local ")
 	}
 	for _, expr := range stmt.Lhs {
 		cast(expr).(Translator).Translate(writer)
@@ -451,6 +501,9 @@ func (expr *AstBadExpr)Translate(writer writer.LuaWriter) {
 type AstIdent ast.Ident
 func (ident *AstIdent)Translate(writer writer.LuaWriter) {
 	writer.AppendLine(0, ident.NamePos, ident.Name)
+	if ident.Name == "iota" {
+		writer.SetIota(true)
+	}
 }
 
 type AstEllipsis ast.Ellipsis
@@ -483,8 +536,11 @@ type AstCompositeLit ast.CompositeLit
 func (compositeLit *AstCompositeLit)Translate(writer writer.LuaWriter) {
 	cast(compositeLit.Type).(Translator).Translate(writer)
 	writer.AppendLine(0, compositeLit.Lbrace, "{")
-	for _, expr := range compositeLit.Elts {
+	for index, expr := range compositeLit.Elts {
 		cast(expr).(Translator).Translate(writer)
+		if index < len(compositeLit.Elts) - 1 {
+			writer.AppendLine(0, 0, ",")
+		}
 	}
 	writer.AppendLine(0, compositeLit.Rbrace, "}")
 }
@@ -508,7 +564,7 @@ func (indexExpr *AstIndexExpr)Translate(writer writer.LuaWriter) {
 	cast(indexExpr.X).(Translator).Translate(writer)
 	writer.AppendLine(0, indexExpr.Lbrack, "[")
 	cast(indexExpr.Index).(Translator).Translate(writer)
-	writer.AppendLine(0, indexExpr.Rbrack, "]")
+	writer.AppendLine(0, indexExpr.Rbrack, "+1]")
 }
 
 type AstSliceExpr ast.SliceExpr
@@ -516,11 +572,24 @@ func (sliceExpr *AstSliceExpr)Translate(writer writer.LuaWriter) {
 	writer.AppendLine(0, sliceExpr.Lbrack, "slice(")
 	cast(sliceExpr.X).(Translator).Translate(writer)
 	writer.AppendLine(0, 0, ",")
-	cast(sliceExpr.Low).(Translator).Translate(writer)
+	if sliceExpr.Low != nil {
+		cast(sliceExpr.Low).(Translator).Translate(writer)
+	} else {
+		writer.AppendLine(0, 0, "nil")
+	}
 	writer.AppendLine(0, 0, ",")
-	cast(sliceExpr.High).(Translator).Translate(writer)
-	writer.AppendLine(0, 0, ",")
-	cast(sliceExpr.Max).(Translator).Translate(writer)
+
+	if sliceExpr.High != nil {
+		cast(sliceExpr.High).(Translator).Translate(writer)
+	} else {
+		writer.AppendLine(0, 0, "nil")
+	}
+
+	if sliceExpr.Max != nil {
+		writer.AppendLine(0, 0, ",")
+		cast(sliceExpr.Max).(Translator).Translate(writer)
+	}
+
 	writer.AppendLine(0, sliceExpr.Rbrack, ")")
 }
 
@@ -543,8 +612,19 @@ func (callExpr *AstCallExpr)Translate(writer writer.LuaWriter) {
 			writer.AppendLine(0, 0, ",")
 		}
 	}
+	hasEllipsis := false
+	if callExpr.Ellipsis > 0 {
+		hasEllipsis = true
+	}
 	for index, arg := range callExpr.Args {
-		cast(arg).(Translator).Translate(writer)
+		//such as:append(s1, s2...)
+		if index == len(callExpr.Args) - 1 && hasEllipsis{
+			writer.AppendLine(0, 0, "unpack_slice(")
+			cast(arg).(Translator).Translate(writer)
+			writer.AppendLine(0, 0, ")")
+		} else {
+			cast(arg).(Translator).Translate(writer)
+		}
 		if index < len(callExpr.Args) - 1 {
 			writer.AppendLine(0, 0, ",")
 		}
@@ -559,8 +639,11 @@ func (expr *AstStarExpr)Translate(writer writer.LuaWriter) {
 
 type AstUnaryExpr ast.UnaryExpr
 func (expr *AstUnaryExpr)Translate(writer writer.LuaWriter) {
-	if expr.Op == token.NOT {
+	switch expr.Op {
+	case token.NOT:
 		writer.AppendLine(0, expr.OpPos, "not ")
+	case token.SUB:
+		writer.AppendLine(0, expr.OpPos, "-")
 	}
 	cast(expr.X).(Translator).Translate(writer)
 }
@@ -641,7 +724,9 @@ func (expr *AstBinaryExpr)Translate(writer writer.LuaWriter) {
 
 type AstKeyValueExpr ast.KeyValueExpr
 func (expr *AstKeyValueExpr)Translate(writer writer.LuaWriter) {
+	writer.AppendLine(0, 0, "[")
 	cast(expr.Key).(Translator).Translate(writer)
+	writer.AppendLine(0, 0, "]")
 	writer.AppendLine(0, expr.Colon, " = ")
 	cast(expr.Value).(Translator).Translate(writer)
 }
@@ -649,7 +734,23 @@ func (expr *AstKeyValueExpr)Translate(writer writer.LuaWriter) {
 //ast.Type
 type AstArrayType ast.ArrayType
 func (arrayType *AstArrayType)Translate(writer writer.LuaWriter) {
-	writer.AppendLine(0, arrayType.Lbrack, "array")
+	if arrayType.Len != nil {
+		writer.AppendLine(0, arrayType.Lbrack, "array_type(")
+		cast(arrayType.Elt).(Translator).Translate(writer)
+		writer.AppendLine(0, 0, ",")
+		switch arrayType.Len.(type) {
+		case *ast.Ellipsis:
+			writer.AppendLine(0, 0, "-1")
+		default:
+			cast(arrayType.Len).(Translator).Translate(writer)
+		}
+
+		writer.AppendLine(0, 0, ")")
+	} else {
+		writer.AppendLine(0, arrayType.Lbrack, "slice_type(")
+		cast(arrayType.Elt).(Translator).Translate(writer)
+		writer.AppendLine(0, 0, ")")
+	}
 }
 
 type AstField ast.Field

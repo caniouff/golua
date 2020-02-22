@@ -15,16 +15,19 @@ local meta = getmetatable("")
 meta.__add = function(a, b)
     return a .. b
 end
-function _G.import(path)
-    return require(path)
-end
 
-function _G.checkType(value, defType)
-    return value
-end
-
-function _G.new(define)
-    return define()
+local slice_meta = {
+    __type = "slice",
+    __index = function(t, key)
+        return t.data[key + t.start]
+    end,
+    __newindex = function(t, key, value)
+        t.data[key + t.start] = value
+    end
+}
+local function is_slice(t)
+    local meta = getmetatable(t)
+    return meta == slice_meta
 end
 
 local function utf8len(byte)
@@ -42,6 +45,25 @@ local function utf8len(byte)
     end
     return count
 end
+
+local function copy_table(dst, src)
+    for index, value in pairs(src) do
+        dst[index] = value
+    end
+end
+
+function _G.import(path)
+    return require(path)
+end
+
+function _G.checkType(value, defType)
+    return value
+end
+
+function _G.new(define)
+    return define()
+end
+
 function _G.rangestr(value)
     local charSeq = {}
     local index = 1
@@ -58,6 +80,8 @@ end
 function _G.range(value)
     if type(value) == "string" then
         return rangestr(value)
+    elseif is_slice(value) then
+        return ipairs(value.data)
     else
         return pairs(value)
     end
@@ -107,7 +131,6 @@ function _G.struct(define)
                 __newindex = function(t, k, v)
                     local foundEs
                     for name, es in pairs(embed) do
-                        print("embed", name, k)
                         local esObj = rawget(t, name)
                         local value = esObj[k]
                         if value or (es[k] and es[k].__name == "interface") then
@@ -117,6 +140,9 @@ function _G.struct(define)
                             esObj[k] = v
                             foundEs = true
                         end
+                    end
+                    if not foundEs and def[k].__type == "interface" then
+                        rawset(t, k, v)
                     end
                 end,
                 __index = function(t, k)
@@ -153,35 +179,103 @@ function _G.as(obj, inf)
     return obj
 end
 
-function _G.slice(t, iStart, iEnd)
-    local newt = {}
-    for i = iStart, iEnd - 1 do
-        table.insert(newt, t[i])
+--will change old silce, for performance
+function _G.append(t, ...)
+    if is_slice(t) then
+        for _, v in ipairs({...}) do
+            table.insert(t.data, v, t.start + t.len)
+            t.len = t.len + 1
+        end
+        return t
+    else
+        error("not a slice")
     end
-    return newt
+end
+
+function _G.copy(dst, src)
+    if is_slice(dst) and is_slice(src) then
+        dst.start = 0
+        dst.len = src.len
+        dst.data = {}
+        copy_table(dst.data, src.data)
+    else
+        error("not a slice")
+    end
+end
+
+function _G.slice(t, iStart, iEnd)
+    iStart = iStart or 0
+    iEnd = iEnd or #t
+    local newt = {
+        start = iStart + 1,
+        len = iEnd - iStart,
+        data = t,
+    }
+
+    return setmetatable(newt, slice_meta)
+end
+
+function _G.unpack_slice(t)
+    if is_slice(t) then
+        return unpack(t.data)
+    else
+        error("not a slice")
+    end
 end
 
 function _G.len(value)
     if type(value) == "string" then
         return utf8len(value)
+    elseif is_slice(value) then
+        return value.len
     else
         return select("#", value)
     end
 end
 
-function _G.make(defType, ...)
-    return defType(...)
+local array_meta = {
+    __call = function(t, param)
+        for index = len(param) + 1, t.length do
+            table.insert(param, t.eleType())
+        end
+        return param
+    end
+}
+function _G.array_type(eleType, num)
+    local tArray = {}
+    tArray.eleType = eleType
+    tArray.length = num
+    return setmetatable(tArray, array_meta)
 end
 
-function _G.array(param1, param2)
-    if type(param1) == "table" then
-        return param1
+local slice_meta = {
+    __call = function(t, param)
+        for index = len(param) + 1, t.length do
+            table.insert(param, t.eleType())
+        end
+        return _G.slice(param)
+    end
+}
+
+function _G.slice_type(eleType)
+    local tArray = {}
+    tArray.eleType = eleType
+    tArray.length = 0
+    return setmetatable(tArray, slice_meta)
+end
+
+function _G.make(defType, ...)
+    if getmetatable(defType) == slice_meta then
+        local length = ...
+        local slice_struct = defType()
+        slice_struct.length = length
+        return slice_struct({})
     end
     return {}
 end
 
-function _G.map()
-    return {}
+function _G.map(param1)
+    return param1
 end
 
 ----------------------------------
